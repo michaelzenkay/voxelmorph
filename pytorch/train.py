@@ -23,6 +23,23 @@ import datagenerators
 import losses
 
 
+def createatlas(example_gen, nb_atl_creation=140):
+    print('creating "atlas" by averaging %d subjects' % nb_atl_creation)
+    x_avg = 0
+    for _ in range(nb_atl_creation):
+        # x_avg += next(example_gen)[0][0, ..., 0]
+        try:
+            x_avg = next(example_gen)[0][0, ..., 0]
+        except:
+            print('hi')
+        print(x_avg.shape)
+    x_avg /= nb_atl_creation
+
+    x_avg = x_avg[np.newaxis, ..., np.newaxis]
+    atlas_vol = x_avg
+    return atlas_vol
+
+
 def train(gpu,
           data_dir,
           atlas_file,
@@ -52,15 +69,28 @@ def train(gpu,
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu
     device = "cuda"
 
-    # Produce the loaded atlas with dims.:160x192x224.
-    atlas_vol = np.load(atlas_file)['vol'][np.newaxis, ..., np.newaxis]
-    vol_size = atlas_vol.shape[1:-1]
-
     # Get all the names of the training data
-    train_vol_names = glob.glob(os.path.join(data_dir, '*.npz'))
+    train_vol_names = glob.glob(os.path.join(data_dir, '*2.nii.gz'))
     random.shuffle(train_vol_names)
 
+    # data generator
+    train_example_gen = datagenerators.example_gen_mzl(train_vol_names, batch_size)
+
+    # Create Conditional Atlas
+    if atlas_file==None:
+        atlas_vol = createatlas(train_example_gen)
+        atlas_fn = os.path.join(data_dir, 'atlas.npz')
+        if not os.path.exists(atlas_fn):
+            np.save(atlas_fn, atlas_vol)
+    # Load Atlas
+    else:
+        np.load(atlas_fn)
+        atlas_vol = np.load(atlas_file)
+        # Produce the loaded atlas with dims.:160x192x224.
+        # atlas_vol = np.load(atlas_file)['vol'][np.newaxis, ..., np.newaxis]
+
     # Prepare the vm1 or vm2 model and send to device
+    vol_size = atlas_vol.shape[1:-1]
     nf_enc = [16, 32, 32, 32]
     if model == "vm1":
         nf_dec = [32, 32, 32, 32, 8, 8]
@@ -75,11 +105,12 @@ def train(gpu,
     # Set optimizer and losses
     opt = Adam(model.parameters(), lr=lr)
 
-    sim_loss_fn = losses.ncc_loss if data_loss == "ncc" else losses.mse_loss
+    # Set Losses
+    # sim_loss_fn = losses.ncc_loss if data_loss == "ncc" else losses.mse_loss
+    sim_loss_fn = losses.mni
     grad_loss_fn = losses.gradient_loss
 
-    # data generator
-    train_example_gen = datagenerators.example_gen(train_vol_names, batch_size)
+
 
     # set up atlas tensor
     atlas_vol_bs = np.repeat(atlas_vol, batch_size, axis=0)

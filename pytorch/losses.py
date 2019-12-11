@@ -94,3 +94,22 @@ def compute_local_sums(I, J, filt, stride, padding, win):
     J_var = J2_sum - 2 * u_J * J_sum + u_J * u_J * win_size
 
     return I_var, J_var, cross
+
+import SimpleITK as sitk
+
+def mmi(I,J):
+    I = sitk.Cast(sitk.GetImageFromArray(I), sitk.sitkFloat32)
+    J = sitk.Cast(sitk.GetImageFromArray(J), sitk.sitkFloat32)
+
+    # Hijack Simple ITK Registration method for Mattes MutualInformation metric
+    R = sitk.ImageRegistrationMethod()
+    R.SetMetricAsMattesMutualInformation()
+    MMI = R.MetricEvaluate(I, J)
+    return MMI
+
+from os.path import join
+import nibabel as nib
+a = nib.load('D:/1001_2.nii.gz').get_data()
+b = nib.load('D:/1001_3.nii.gz').get_data()
+
+mmi(a,b)
