@@ -16,6 +16,7 @@ from argparse import ArgumentParser
 import numpy as np
 import torch
 from torch.optim import Adam
+import nibabel as nib
 
 # internal imports
 from model import cvpr2018_net
@@ -29,16 +30,23 @@ def createatlas(example_gen, nb_atl_creation=140):
     for _ in range(nb_atl_creation):
         # x_avg += next(example_gen)[0][0, ..., 0]
         try:
-            x_avg = next(example_gen)[0][0, ..., 0]
+            x_avg += next(example_gen)[0][0, ..., 0]
         except:
-            print('hi')
-        print(x_avg.shape)
+            print('problem with atlas generator')
     x_avg /= nb_atl_creation
 
     x_avg = x_avg[np.newaxis, ..., np.newaxis]
     atlas_vol = x_avg
     return atlas_vol
 
+
+def viz(img,fn='/data/mike/test.nii.gz'):
+    try:
+        flatten = np.squeeze(img.cpu().detach().numpy())
+    except:
+        flatten = np.squeeze(img)
+    niimg = nib.Nifti1Image(flatten,np.eye(4))
+    nib.save(niimg,fn)
 
 def train(gpu,
           data_dir,
@@ -70,7 +78,7 @@ def train(gpu,
     device = "cuda"
 
     # Get all the names of the training data
-    train_vol_names = glob.glob(os.path.join(data_dir, '*2.nii.gz'))
+    train_vol_names = glob.glob(os.path.join(data_dir, '1*2.nii.gz'))
     random.shuffle(train_vol_names)
 
     # data generator
@@ -79,13 +87,16 @@ def train(gpu,
     # Create Conditional Atlas
     if atlas_file==None:
         atlas_vol = createatlas(train_example_gen)
-        atlas_fn = os.path.join(data_dir, 'atlas.npz')
+        atlas_fn = os.path.join(data_dir, 'atlas.nii.gz')
         if not os.path.exists(atlas_fn):
             np.save(atlas_fn, atlas_vol)
     # Load Atlas
     else:
-        np.load(atlas_fn)
-        atlas_vol = np.load(atlas_file)
+        try:
+            atlas_vol = np.load(atlas_file)
+        except:
+            import nibabel as nib
+            atlas_vol = nib.load(atlas_file).get_data()
         # Produce the loaded atlas with dims.:160x192x224.
         # atlas_vol = np.load(atlas_file)['vol'][np.newaxis, ..., np.newaxis]
 
@@ -106,11 +117,18 @@ def train(gpu,
     opt = Adam(model.parameters(), lr=lr)
 
     # Set Losses
-    # sim_loss_fn = losses.ncc_loss if data_loss == "ncc" else losses.mse_loss
-    sim_loss_fn = losses.mni
+    if data_loss == "ncc":
+        sim_loss_fn = losses.ncc_loss
+    elif data_loss == "mmi":
+        sim_loss_fn = losses.mmi
+    elif data_loss == "jhmmi":
+        sim_loss_fn = losses.jhmi
+    elif data_loss == "demons":
+        sim_loss_fn = losses.demons
+    else:
+        sim_loss_fn = losses.mse_loss
+
     grad_loss_fn = losses.gradient_loss
-
-
 
     # set up atlas tensor
     atlas_vol_bs = np.repeat(atlas_vol, batch_size, axis=0)
@@ -138,7 +156,7 @@ def train(gpu,
         grad_loss = grad_loss_fn(flow)
         loss = recon_loss + reg_param * grad_loss
 
-        print("%d,%f,%f,%f" % (i, loss.item(), recon_loss.item(), grad_loss.item()), flush=True)
+        print('%d loss[tot: %6.2f - recon: %6.2f - grad: %6.6f]' % (i, loss.item(), recon_loss.item(), grad_loss.item()))
 
         # Backwards and optimize
         opt.zero_grad()
