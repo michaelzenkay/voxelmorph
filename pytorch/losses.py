@@ -98,18 +98,48 @@ def compute_local_sums(I, J, filt, stride, padding, win):
 import SimpleITK as sitk
 
 def mmi(I,J):
-    I = sitk.Cast(sitk.GetImageFromArray(I), sitk.sitkFloat32)
-    J = sitk.Cast(sitk.GetImageFromArray(J), sitk.sitkFloat32)
+    # MattesMutualInformation throws error when both images are 0 https://github.com/SimpleITK/SimpleITK/issues/898
+    if np.mean(I)==0 or np.mean(J)==0:
+        return torch.tensor(0).cuda()
 
     # Hijack Simple ITK Registration method for Mattes MutualInformation metric
     R = sitk.ImageRegistrationMethod()
     R.SetMetricAsMattesMutualInformation()
-    MMI = R.MetricEvaluate(I, J)
-    return MMI
+    MMI = R.MetricEvaluate(to_sitkimg(I), to_sitkimg(J))
+    return torch.tensor(MMI).cuda()
 
-from os.path import join
-import nibabel as nib
-a = nib.load('D:/1001_2.nii.gz').get_data()
-b = nib.load('D:/1001_3.nii.gz').get_data()
+def jhmi(I,J):
+    # Joint Histogram Mutual Information
+    # MutualInformation throws error when both images are 0 https://github.com/SimpleITK/SimpleITK/issues/898
+    if np.mean(I)==0 or np.mean(J)==0:
+        return torch.tensor(0).cuda()
 
-mmi(a,b)
+    # Hijack Simple ITK Registration method for Mattes MutualInformation metric
+    R = sitk.ImageRegistrationMethod()
+    R.SetMetricAsJointHistogramutualInformation()
+    JHMI = R.MetricEvaluate(to_sitkimg(I), to_sitkimg(J))
+    return torch.tensor(JHMI).cuda()
+
+def ncc(I,J):
+    # Normalized Cross Correlation
+    R = sitk.ImageRegistrationMethod()
+    R.SetMetricAsMattesMutualInformation()
+    NCC = R.MetricEvaluate(to_sitkimg(I), to_sitkimg(J))
+    return torch.tensor(NCC).cuda()
+
+def demons(I,J):
+    # Normalized Cross Correlation
+    R = sitk.ImageRegistrationMethod()
+    R.SetMetricAsDemons()
+    DEMONS = R.MetricEvaluate(to_sitkimg(I), to_sitkimg(J))
+    return torch.tensor(DEMONS).cuda()
+
+def to_sitkimg(img):
+    # if img is sitting on gpu, pull it to cpu
+    try:
+        img = np.squeeze(img.cpu().detach().numpy())
+    except:
+        None
+    img = sitk.GetImageFromArray(img)
+    img = sitk.Cast(img,sitk.sitkFloat32)
+    return img
