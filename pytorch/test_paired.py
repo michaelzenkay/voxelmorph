@@ -48,22 +48,21 @@ def test(gpu,
     model.to(device)
     model.load_state_dict(torch.load(modelfn, map_location=lambda storage, loc: storage))
 
+    batch_size=1
+    train_example_gen = datagenerators.paired_gen(moving_fns, batch_size)
+
+
     # Use this to warp segments
-    trf = SpatialTransformer(vol_size.shape[1:-1], mode='nearest')
+    trf = SpatialTransformer(vol_size, mode='nearest')
     trf.to(device)
 
     for i in range(0,len(moving_fns)):
-        # Get filnames
-        moving_fn = moving_fns[i]
-        fixed_fn = moving_fn[:-8] + '2.nii.gz'
+        # Get Images
+        fixed_image, moving_image = next(train_example_gen)
 
-        # Load Volumes
-        fixed_input = load_volfile(fixed_fn)
-        moving_input = load_volfile(fixed_fn)
-
-        # To CUDA
-        input_fixed = torch.from_numpy(fixed_input).to(device).float()
-        input_moving = torch.from_numpy(moving_input).to(device).float()
+        # To GPU
+        input_fixed = torch.from_numpy(fixed_image[0]).to(device).float()
+        input_moving = torch.from_numpy(moving_image[0]).to(device).float()
 
         # Shapeshifting
         input_fixed = input_fixed.permute(0, 4, 1, 2, 3)
@@ -73,11 +72,11 @@ def test(gpu,
         warped, flow = model(input_moving, input_fixed)
 
         # Compare
-        original = losses.mmi(warped,input_fixed)
-        warped = losses.mmi(input_moving,input_fixed)
-        diff = original-warped
+        og_loss = losses.mmi(warped,input_fixed).cpu().detach().numpy()
+        warp_loss = losses.mmi(input_moving,input_fixed).cpu().detach().numpy()
+        diff = og_loss-warp_loss
 
-        print('Before '+ str(original) + ' : After ' + str(warped) + ' : diff ' + str(diff))
+        print('OG Loss '+ str(og_loss) + ' : Warp Loss ' + str(warp_loss) + ' : diff ' + str(diff))
  
 
 if __name__ == "__main__":
@@ -94,9 +93,9 @@ if __name__ == "__main__":
                         default='vm2',
                         help="voxelmorph 1 or 2")
 
-    parser.add_argument("--init_model_file", 
+    parser.add_argument("--modelfn",
                         type=str,
-                        dest="init_model_file", 
+                        dest="modelfn",
                         help="model weight file")
 
     test(**vars(parser.parse_args()))
