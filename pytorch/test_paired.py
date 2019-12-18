@@ -7,10 +7,12 @@ VoxelMorph testing
 
 # python imports
 import os
+from os.path import join, basename, dirname
 import glob
 import random
 import sys
 from argparse import ArgumentParser
+import nibabel as nib
 
 import numpy as np
 import torch
@@ -20,12 +22,26 @@ from datagenerators import load_volfile
 import scipy.io as sio
 import losses
 
+def export2nii(vol,fn):
+    try:
+        vol=vol.cpu().detach().numpy()
+    except:
+        None
+    vol = np.squeeze(vol)
+    if len(vol.shape)!=5:
+        print('Can not handle this input image')
+        return
+    nii = nib.Nifti1Image(vol,np.eye(4))
+    nib.save(nii,fn)
+    print('saved to ' +fn)
 
 def test(gpu,
          moving_fns,
          model, 
          modelfn,
-         vol_size=(128,256,256)):
+         outdir,
+         vol_size=(128,256,256),
+         batch_size = 1):
     """
     model training function
     :param gpu: integer specifying the gpu to use
@@ -48,9 +64,7 @@ def test(gpu,
     model.to(device)
     model.load_state_dict(torch.load(modelfn, map_location=lambda storage, loc: storage))
 
-    batch_size=1
     train_example_gen = datagenerators.paired_gen(moving_fns, batch_size)
-
 
     # Use this to warp segments
     trf = SpatialTransformer(vol_size, mode='nearest')
@@ -58,23 +72,29 @@ def test(gpu,
 
     for i in range(0,len(moving_fns)):
         # Get Images
-        fixed_image, moving_image = next(train_example_gen)
+        fixed_image, moving_image , fixed_fn, moving_fn= next(train_example_gen)
 
         # To GPU
-        input_fixed = torch.from_numpy(fixed_image[0]).to(device).float()
-        input_moving = torch.from_numpy(moving_image[0]).to(device).float()
+        fixed_gpu = torch.from_numpy(fixed_image[0]).to(device).float()
+        moving_gpu = torch.from_numpy(moving_image[0]).to(device).float()
 
         # Shapeshifting
-        input_fixed = input_fixed.permute(0, 4, 1, 2, 3)
-        input_moving = input_moving.permute(0, 4, 1, 2, 3)
+        fixed_gpu = fixed_gpu.permute(0, 4, 1, 2, 3)
+        moving_gpu = moving_gpu.permute(0, 4, 1, 2, 3)
 
         # Forward Pass
-        warped, flow = model(input_moving, input_fixed)
+        warped, flow = model(moving_gpu, fixed_gpu)
 
         # Compare
-        og_loss = losses.mmi(warped,input_fixed).cpu().detach().numpy()
-        warp_loss = losses.mmi(input_moving,input_fixed).cpu().detach().numpy()
+        og_loss = losses.mmi(warped,fixed_gpu).cpu().detach().numpy()
+        warp_loss = losses.mmi(moving_gpu,fixed_gpu).cpu().detach().numpy()
         diff = og_loss-warp_loss
+
+        warped_fn = join(outdir,basename(moving_fn))
+        fixed_fn1 = join(outdir, basename(fixed_fn))
+        if not os.path.exists(fixed_fn1):
+            export2nii(fixed_gpu, fixed_fn1)
+        export2nii(warped, warped_fn)
 
         print('OG Loss '+ str(og_loss) + ' : Warp Loss ' + str(warp_loss) + ' : diff ' + str(diff))
  

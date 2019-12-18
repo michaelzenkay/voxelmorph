@@ -7,6 +7,7 @@ data generators for voxelmorph
 import numpy as np
 import sys
 import cv2
+import torch
 
 def load_example_by_name(vol_name, seg_name=None):
     """
@@ -23,7 +24,6 @@ def load_example_by_name(vol_name, seg_name=None):
         return_vals.append(X_seg)
 
     return tuple(return_vals)
-
 
 def load_volfile(datafile):
     """
@@ -108,7 +108,7 @@ def example_gen_mzl(vol_names, batch_size=1):
     while True:
         idxes = np.random.randint(len(vol_names), size=batch_size)
 
-        vol_shape = (78, 256, 256)
+        vol_shape = (128, 256, 256)
 
         X_data = []
         for idx in idxes:
@@ -123,9 +123,14 @@ def example_gen_mzl(vol_names, batch_size=1):
             # Zero Fill
             for ii in range(start,end):
                 # Reshape if necessary
-                if X.shape[1] != X.shape[2] or X.shape[2] != vol_shape[1]:
-                    zfill[ii] = cv2.resize(X[i,:,:],(vol_shape[1],vol_shape[2]), interpolation=cv2.INTER_CUBIC)
-                i = i+1
+                try:
+                    if X.shape[1] != X.shape[2] or X.shape[2] != vol_shape[1]:
+                        zfill[ii] = cv2.resize(X[i,:,:],(vol_shape[1],vol_shape[2]), interpolation=cv2.INTER_CUBIC)
+                    else:
+                        zfill[ii]= X[i,:,:]
+                    i = i+1
+                except:
+                    print('error with zerofill')
             X = zfill
 
             # Get dimensions right
@@ -138,3 +143,58 @@ def example_gen_mzl(vol_names, batch_size=1):
             return_vals = [X_data[0]]
 
         yield tuple(return_vals)
+
+def paired_gen(fixed_vols, batch_size=1):
+
+    while True:
+        idxes = np.random.randint(len(fixed_vols), size=batch_size)
+
+        vol_shape = (128, 256, 256)
+
+        X_data, Y_data = [],[]
+        for idx in idxes:
+            fn_x = fixed_vols[idx]
+            X = load_volfile(fn_x)
+            fn_y= fn_x[:-8] + '2.nii.gz'
+            Y = load_volfile(fn_y)
+
+
+            # Preprocess -> 104x256x256
+            zfill_X = np.zeros(vol_shape)
+            zfill_Y = np.zeros(vol_shape)
+
+            diff = vol_shape[0] - X.shape[0]
+            start =  int(diff/2)
+            end = start + X.shape[0]
+            i = 0
+            # Zero Fill
+            for ii in range(start,end):
+                # Reshape if necessary
+                try:
+                    if X.shape[1] != X.shape[2] or X.shape[2] != vol_shape[1]:
+                        zfill_X[ii] = cv2.resize(X[i, :, :], (vol_shape[1], vol_shape[2]), interpolation=cv2.INTER_CUBIC)
+                        zfill_Y[ii] = cv2.resize(Y[i, :, :], (vol_shape[1], vol_shape[2]), interpolation=cv2.INTER_CUBIC)
+                    else:
+                        zfill_X[ii] = X[i, :, :]
+                        zfill_Y[ii] = Y[i, :, :]
+                    i = i+1
+                except:
+                    print('error with zerofill')
+            X = zfill_X
+            Y = zfill_Y
+
+            # Get dimensions right
+            X = X[np.newaxis, ..., np.newaxis]
+            Y = Y[np.newaxis, ..., np.newaxis]
+
+            X_data.append(X)
+            Y_data.append(Y)
+
+        if batch_size > 1:
+            return_vals_X = [np.concatenate(X_data, 0)]
+            return_vals_Y = [np.concatenate(Y_data, 0)]
+        else:
+            return_vals_X = [X_data[0]]
+            return_vals_Y = [Y_data[0]]
+
+        yield tuple(return_vals_X), tuple(return_vals_Y), fn_x, fn_y
